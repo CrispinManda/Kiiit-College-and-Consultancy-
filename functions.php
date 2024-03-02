@@ -115,14 +115,24 @@ function add_custom_roles() {
 }
 add_action('init', 'add_custom_roles');
 
-// Restrict access to administrator dashboard for teachers
-function restrict_teacher_dashboard_access() {
-    if (current_user_can('teacher') && is_admin()) {
+//Admin bar & admin dashboard
+
+function restrict_teacher_student_dashboard_access() {
+    if (current_user_can('teacher') || current_user_can('student') && is_admin()) {
         wp_redirect(home_url());
         exit;
     }
+    add_action('after_setup_theme', 'hide_admin_bar');
 }
-add_action('admin_init', 'restrict_teacher_dashboard_access');
+add_action('admin_init', 'restrict_teacher_student_dashboard_access');
+
+function hide_admin_bar() {
+    if (!current_user_can('manage_options')) {
+        show_admin_bar(false);
+    }
+}
+
+
 
 // Add capabilities for students to receive tasks and upload submissions
 function add_student_capabilities() {
@@ -131,3 +141,95 @@ function add_student_capabilities() {
     $student->add_cap('upload_files');
 }
 add_action('init', 'add_student_capabilities');
+
+
+/*-------------------------------------------------------------------------*/
+/*             SHOW DIFFERENT DASHBOARD DEPENDING ON USER                  */
+/*-------------------------------------------------------------------------*/
+
+function dashboard_page_template($template) {
+    if (!is_user_logged_in()) return $template;
+    
+    $current_user = wp_get_current_user();
+    $user_roles = $current_user->roles;
+
+    if (in_array('administrator', $user_roles)) {
+        // Redirect admin to the admin dashboard
+        wp_redirect(admin_url());
+        exit;
+    } elseif (in_array('teacher', $user_roles)) {
+        // Load teacher dashboard template
+        $new_template = locate_template(array('teacher-dashboard.php'));
+    } elseif (in_array('student', $user_roles)) {
+        // Load student portal dashboard template
+        $new_template = locate_template(array('student-dashboard.php'));
+    } else {
+        // For any other role, load the default front-page template
+        $new_template = locate_template(array('front-page.php'));
+    }
+
+    if ('' != $new_template) {
+        $template = $new_template;
+    }
+
+    return $template;
+}
+add_filter('template_include', 'dashboard_page_template');
+
+
+
+
+// Add custom column to the users list
+add_filter('manage_users_columns', 'custom_users_columns');
+
+function custom_users_columns($columns) {
+    $columns['account_status'] = 'Account Status';
+    return $columns;
+}
+
+// Populate custom column with activation status
+add_filter('manage_users_custom_column', 'custom_users_column_content', 10, 3);
+
+function custom_users_column_content($value, $column_name, $user_id) {
+    if ($column_name === 'account_status') {
+        $status = get_user_meta($user_id, 'account_status', true);
+        return ucfirst($status); // Capitalize the status for better readability
+    }
+    return $value;
+}
+
+// Add activation and delete links to custom column
+add_filter('user_row_actions', 'custom_user_row_actions', 10, 2);
+
+function custom_user_row_actions($actions, $user) {
+    if (current_user_can('administrator')) {
+        $status = get_user_meta($user->ID, 'account_status', true);
+        if ($status === 'inactive') {
+            $actions['activate'] = '<a href="' . admin_url('admin-post.php?action=activate_user&user_id=' . $user->ID) . '">Activate</a>';
+        }
+        $actions['delete'] = '<a href="' . admin_url('admin-post.php?action=delete_user&user_id=' . $user->ID) . '">Delete</a>';
+    }
+    return $actions;
+}
+
+// Handle activation and deletion actions
+add_action('admin_post_activate_user', 'activate_user');
+add_action('admin_post_delete_user', 'delete_user');
+
+function activate_user() {
+    if (isset($_GET['user_id']) && current_user_can('administrator')) {
+        $user_id = $_GET['user_id'];
+        update_user_meta($user_id, 'account_status', 'active');
+        wp_redirect(admin_url('users.php'));
+        exit;
+    }
+}
+
+function delete_user() {
+    if (isset($_GET['user_id']) && current_user_can('administrator')) {
+        $user_id = $_GET['user_id'];
+        wp_delete_user($user_id, true);
+        wp_redirect(admin_url('users.php'));
+        exit;
+    }
+}
